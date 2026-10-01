@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>잼플(Jample) - 투자 건강검진 프로그램</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body {
+      background-color: #f5f5f4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  </style>
+</head>
+<body class="flex justify-center items-center min-h-screen">
+
+  <div id="root" class="w-full"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    const formatNumber = (val) => {
+      if (val === undefined || val === null || val === '') return '';
+      const num = Number(String(val).replace(/[^0-9]/g, ''));
+      return isNaN(num) ? '' : num.toLocaleString();
+    };
+
+    const parseNumber = (val) => {
+      const num = Number(String(val).replace(/[^0-9]/g, ''));
+      return isNaN(num) ? 0 : num;
+    };
+
+    const analyzeFundOrEtf = (text) => {
+      const name = (text || '').trim();
+      if (!name) return { type: '성장주식', region: '기타', sector: '기타' };
+
+      let type = '성장주식';
+      let region = '국내';
+      let sector = '시장대표지수';
+
+      if (/채권|국채|단기채|회사채|머니마켓|kofr|cd금리/i.test(name)) {
+        type = '채권·안전';
+      } else if (/배당|고배당|다우존스|인컴|리츠|커버드콜/i.test(name)) {
+        type = '배당·인컴';
+      } else {
+        type = '성장주식';
+      }
+
+      if (/글로벌|미국|s&p|나스닥|차이나|인도|베트남|유럽|재팬|world|china|india|피델리티/i.test(name)) {
+        if (/미국|s&p|나스닥|다우/i.test(name)) region = '미국';
+        else if (/차이나|중국/i.test(name)) region = '중국';
+        else if (/인도/i.test(name)) region = '인도';
+        else region = '글로벌';
+      } else {
+        region = '국내';
+      }
+
+      if (/테크|it|반도체|ai|소프트|인공지능|글로벌테크/i.test(name)) {
+        sector = 'IT·테크';
+      } else if (/우주항공|항공|스페이스/i.test(name)) {
+        sector = '우주항공·방산';
+      } else if (/2차전지|배터리|전기차/i.test(name)) {
+        sector = '2차전지·모빌리티';
+      } else if (/바이오|헬스|제약/i.test(name)) {
+        sector = '바이오·헬스';
+      } else if (/배당|고배당|다우존스/i.test(name)) {
+        sector = '배당·인컴';
+      } else if (/채권|국채|단기채/i.test(name)) {
+        sector = '채권자산';
+      } else {
+        sector = '시장대표지수';
+      }
+
+      return { type, region, sector };
+    };
+
+    const COLOR_MAP = [
+      { bg: 'bg-amber-500', hex: '#f59e0b' },
+      { bg: 'bg-blue-500', hex: '#3b82f6' },
+      { bg: 'bg-emerald-500', hex: '#10b981' },
+      { bg: 'bg-purple-500', hex: '#a855f7' },
+      { bg: 'bg-rose-500', hex: '#f43f5e' },
+      { bg: 'bg-teal-500', hex: '#14b8a6' }
+    ];
+
+    function DonutChart({ data, total }) {
+      let cumulativePercent = 0;
+      const radius = 16;
+      const circumference = 2 * Math.PI * radius;
+
+      return (
+        <div className="relative w-36 h-36 mx-auto flex items-center justify-center">
+          <svg viewBox="0 0 42 42" className="w-full h-full -rotate-90">
+            <circle cx="21" cy="21" r={radius} fill="transparent" stroke="#f5f5f4" strokeWidth="6" />
+            {data.map((item, idx) => {
+              if (item.percent <= 0) return null;
+              const strokeDasharray = `${(item.percent * circumference) / 100} ${circumference}`;
+              const strokeDashoffset = -((cumulativePercent * circumference) / 100);
+              cumulativePercent += item.percent;
+              const color = COLOR_MAP[idx % COLOR_MAP.length].hex;
+
+              return (
+                <circle
+                  key={item.name}
+                  cx="21"
+                  cy="21"
+                  r={radius}
+                  fill="transparent"
+                  stroke={color}
+                  strokeWidth="6"
+                  strokeDasharray={strokeDasharray}
+                  strokeDashoffset={strokeDashoffset}
+                  className="transition-all duration-700 ease-out"
+                />
+              );
+            })}
+          </svg>
+          <div className="absolute flex flex-col items-center justify-center text-center">
+            <span className="text-[10px] text-stone-400 font-medium">총 평가액</span>
+            <span className="text-xs font-bold text-stone-800">{formatNumber(total)}원</span>
+          </div>
+        </div>
+      );
+    }
+
+    function JampleInvestmentDiagnosis() {
+      const [step, setStep] = useState(1);
+      const [chartTab, setChartTab] = useState('type');
+      const [showTip, setShowTip] = useState({ goal: false, alloc: false, buffer: false });
+
+      const [goal, setGoal] = useState({
+        hasGoal: true,
+        title: '3년 후 1억 모으기',
+        targetAmount: 100000000,
+        targetYears: 3
+      });
+
+      const [assets, setAssets] = useState([
+        { 
+          id: 1, 
+          name: '피델리티글로벌테크', 
+          principal: 700000, 
+          amount: 752079, 
+          monthly: 100000
+        },
+        { 
+          id: 2, 
+          name: 'KCGI코리아증권', 
+          principal: 700000, 
+          amount: 730277, 
+          monthly: 100000
+        }
+      ]);
+
+      const [bufferFund, setBufferFund] = useState({
+        amount: 321,
+        monthlyReserve: 150000
+      });
+
+      const handleAddAsset = () => {
+        setAssets(prev => [...prev, { 
+          id: Date.now(), 
+          name: '', 
+          principal: 0, 
+          amount: 0, 
+          monthly: 0 
+        }]);
+      };
+
+      const handleRemoveAsset = (id) => {
+        if (assets.length > 1) {
+          setAssets(assets.filter(a => a.id !== id));
+        }
+      };
+
+      const handleUpdateAsset = (id, field, value) => {
+        setAssets(assets.map(a => a.id === id ? { ...a, [field]: value } : a));
+      };
+
+      const totalPrincipal = assets.reduce((sum, a) => sum + (Number(a.principal) || 0), 0);
+      const totalStockValuation = assets.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+      const totalBufferAmount = Number(bufferFund.amount) || 0;
+      const grandTotal = totalStockValuation + totalBufferAmount || 1;
+
+      const totalMonthlySaving = assets.reduce((sum, a) => sum + (Number(a.monthly) || 0), 0);
+      const totalProfitRate = totalPrincipal > 0 
+        ? (((totalStockValuation - totalPrincipal) / totalPrincipal) * 100).toFixed(2) 
+        : 0;
+
+      const parsedAssets = assets.map(a => ({
+        ...a,
+        ...analyzeFundOrEtf(a.name)
+      }));
+
+      // 1. 투자 유형별 집계
+      const typeMap = {};
+      parsedAssets.forEach(a => {
+        const amt = Number(a.amount) || 0;
+        if (amt > 0) typeMap[a.type] = (typeMap[a.type] || 0) + amt;
+      });
+      if (totalBufferAmount > 0) {
+        typeMap['채권·안전자산'] = (typeMap['채권·안전자산'] || 0) + totalBufferAmount;
+      }
+      const typeList = Object.entries(typeMap).map(([name, amount]) => ({
+        name,
+        amount,
+        percent: Math.round((amount / grandTotal) * 100)
+      })).sort((a, b) => b.percent - a.percent);
+
+      // 2. 지역별 집계
+      const regionMap = {};
+      parsedAssets.forEach(a => {
+        const amt = Number(a.amount) || 0;
+        if (amt > 0) regionMap[a.region] = (regionMap[a.region] || 0) + amt;
+      });
+      if (totalBufferAmount > 0) {
+        regionMap['원화(예수금)'] = (regionMap['원화(예수금)'] || 0) + totalBufferAmount;
+      }
+      const regionList = Object.entries(regionMap).map(([name, amount]) => ({
+        name,
+        amount,
+        percent: Math.round((amount / grandTotal) * 100)
+      })).sort((a, b) => b.percent - a.percent);
+
+      // 3. 산업별 집계
+      const sectorMap = {};
+      parsedAssets.forEach(a => {
+        const amt = Number(a.amount) || 0;
+        if (amt > 0) sectorMap[a.sector] = (sectorMap[a.sector] || 0) + amt;
+      });
+      if (totalBufferAmount > 0) {
+        sectorMap['현금성자산'] = (sectorMap['현금성자산'] || 0) + totalBufferAmount;
+      }
+      const sectorList = Object.entries(sectorMap).map(([name, amount]) => ({
+        name,
+        amount,
+        percent: Math.round((amount / grandTotal) * 100)
+      })).sort((a, b) => b.percent - a.percent);
+
+      // 목표 달성 페이스 계산
+      const hasPurpose = goal.hasGoal && goal.title.trim().length > 0;
+      const targetMonths = (goal.targetYears || 3) * 12;
+      const expectedTotalAmount = grandTotal + (totalMonthlySaving * targetMonths);
+      const expectedPaceRate = goal.targetAmount > 0 
+        ? Math.round((expectedTotalAmount / goal.targetAmount) * 100) 
+        : 0;
+
+      let goalStatus = { text: '목적 부재 🔴', color: 'bg-rose-50 text-rose-700' };
+      if (hasPurpose) {
+        if (expectedPaceRate >= 70) {
+          goalStatus = { text: '목표 순항 중 🟢', color: 'bg-emerald-50 text-emerald-700' };
+        } else {
+          goalStatus = { text: '적립 페이스 부족 🟡', color: 'bg-amber-50 text-amber-800' };
+        }
+      }
+
+      const currentProgress = goal.targetAmount > 0 
+        ? Math.min(100, Math.round((grandTotal / goal.targetAmount) * 100)) 
+        : 0;
+      const hasAdequateBuffer = totalBufferAmount >= 500000 || (totalBufferAmount / grandTotal) >= 0.15;
+      const stockHeavy = (typeMap['성장주식'] || 0) / grandTotal >= 0.8;
+
+      const currentChartData = chartTab === 'type' ? typeList : chartTab === 'region' ? regionList : sectorList;
+
+      return (
+        <div className="max-w-md mx-auto bg-stone-50 min-h-screen text-stone-900 shadow-xl pb-10 flex flex-col">
+          
+          <header className="sticky top-0 bg-white/95 backdrop-blur z-20 px-5 py-4 border-b border-stone-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🌰</span>
+              <h1 className="font-bold text-base text-stone-800">
+                {step === 1 ? "내 투자 목적 & 자산 입력" : "투자 포트폴리오 건강검진"}
+              </h1>
+            </div>
+            <span className="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full">
+              {step === 1 ? "1단계 입력" : "2단계 진단 결과"}
+            </span>
+          </header>
+
+          {/* STEP 1: 입력 화면 */}
+          {step === 1 && (
+            <main className="p-5 space-y-6 flex-1">
+              
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 flex items-start gap-3">
+                <span className="text-3xl">🎯</span>
+                <div>
+                  <p className="text-xs font-bold text-amber-800 mb-0.5">도토리 요정 재무링</p>
+                  <p className="text-sm text-stone-700 leading-snug">
+                    보유하신 자산을 적고 점검을 누르시면,<br />
+                    투자 유형과 지역·산업별 원 그래프를 그려드릴게요!
+                  </p>
+                </div>
+              </div>
+
+              {/* 1. 목적자금 설정 */}
+              <section className="bg-white p-4 rounded-2xl border border-amber-300 shadow-sm space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🚩</span>
+                    <h2 className="text-sm font-bold text-stone-800">1. 투자 목적자금 설정</h2>
+                  </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-xs text-stone-600 font-medium">
+                    <input 
+                      type="checkbox"
+                      checked={goal.hasGoal}
+                      onChange={(e) => setGoal({ ...goal, hasGoal: e.target.checked })}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    목적 있음
+                  </label>
+                </div>
+
+                {goal.hasGoal ? (
+                  <div className="space-y-3 pt-1">
+                    <div>
+                      <label className="text-[11px] text-stone-500 font-medium">목적자금 이름</label>
+                      <input 
+                        type="text"
+                        value={goal.title}
+                        placeholder="예: 3년 내 1억 모으기"
+                        onChange={(e) => setGoal({ ...goal, title: e.target.value })}
+                        className="w-full text-xs font-semibold p-2 border border-stone-200 rounded-lg mt-1 focus:outline-amber-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] text-stone-500 font-medium">목표 금액</label>
+                        <div className="relative mt-1">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={formatNumber(goal.targetAmount)}
+                            onChange={(e) => setGoal({ ...goal, targetAmount: parseNumber(e.target.value) })}
+                            className="w-full text-xs font-semibold p-2 pr-5 border border-stone-200 rounded-lg text-right focus:outline-amber-500 h-[38px]"
+                          />
+                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-stone-400 pointer-events-none">원</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-stone-500 font-medium">목표 기간</label>
+                        <select 
+                          value={goal.targetYears}
+                          onChange={(e) => setGoal({ ...goal, targetYears: Number(e.target.value) })}
+                          className="w-full text-xs font-semibold p-2 border border-stone-200 rounded-lg mt-1 bg-stone-50 h-[38px]"
+                        >
+                          <option value={1}>1년 이내</option>
+                          <option value={3}>3년 (단기)</option>
+                          <option value={5}>5년 (중기)</option>
+                          <option value={10}>10년 이상 (장기)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-stone-50 rounded-xl text-center text-xs text-stone-500">
+                    현재 구체적인 목적 없이 운용 중입니다.
+                  </div>
+                )}
+              </section>
+
+              {/* 2. 보유 투자 상품 리스트 */}
+              <section className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">📈</span>
+                    <h2 className="text-sm font-bold text-stone-800">
+                      2. 보유 투자 상품 ({assets.length}개)
+                    </h2>
+                  </div>
+                  <button 
+                    onClick={handleAddAsset}
+                    className="text-xs text-amber-700 font-bold hover:underline"
+                  >
+                    + 종목 추가
+                  </button>
+                </div>
+
+                {assets.map((item) => (
+                  <div key={item.id} className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm relative space-y-3">
+                    {assets.length > 1 && (
+                      <button 
+                        onClick={() => handleRemoveAsset(item.id)}
+                        className="absolute top-3 right-3 text-stone-400 hover:text-stone-600 text-sm font-bold"
+                      >
+                        ✕
+                      </button>
+                    )}
+
+                    <div>
+                      <label className="text-[11px] text-stone-500 font-medium">종목명</label>
+                      <input 
+                        type="text"
+                        value={item.name}
+                        placeholder="예: 피델리티글로벌테크, KODEX 200"
+                        onChange={(e) => handleUpdateAsset(item.id, 'name', e.target.value)}
+                        className="w-full text-sm font-semibold p-2 border border-stone-200 rounded-lg mt-1 focus:outline-amber-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[11px] text-stone-500 font-medium">투자원금</label>
+                        <div className="relative mt-1">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={formatNumber(item.principal)}
+                            placeholder="0"
+                            onChange={(e) => handleUpdateAsset(item.id, 'principal', parseNumber(e.target.value))}
+                            className="w-full text-xs font-semibold p-2 pr-5 border border-stone-200 rounded-lg text-right focus:outline-amber-500 h-[38px]"
+                          />
+                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-stone-400 pointer-events-none">원</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-stone-500 font-medium">현재 평가액</label>
+                        <div className="relative mt-1">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={formatNumber(item.amount)}
+                            placeholder="0"
+                            onChange={(e) => handleUpdateAsset(item.id, 'amount', parseNumber(e.target.value))}
+                            className="w-full text-xs font-semibold p-2 pr-5 border border-stone-200 rounded-lg text-right focus:outline-amber-500 h-[38px]"
+                          />
+                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-stone-400 pointer-events-none">원</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-amber-700 font-medium">월 적립액</label>
+                        <div className="relative mt-1">
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            value={formatNumber(item.monthly)}
+                            placeholder="0"
+                            onChange={(e) => handleUpdateAsset(item.id, 'monthly', parseNumber(e.target.value))}
+                            className="w-full text-xs font-semibold p-2 pr-5 border border-amber-300 rounded-lg text-right focus:outline-amber-500 h-[38px] bg-amber-50/40"
+                          />
+                          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-amber-600 pointer-events-none">원</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              {/* 3. 투자 여유자금 */}
+              <section className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🛡️</span>
+                    <h2 className="text-sm font-bold text-stone-800">3. 투자 여유자금 (비상금·예수금)</h2>
+                  </div>
+                  <span className="text-[10px] text-teal-800 bg-teal-50 px-2 py-0.5 rounded-full font-bold">완충 버팀목</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-stone-500 font-medium">현재 비상금 / 예수금 잔고</label>
+                    <div className="relative mt-1">
+                      <input 
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumber(bufferFund.amount)}
+                        placeholder="0"
+                        onChange={(e) => setBufferFund({ ...bufferFund, amount: parseNumber(e.target.value) })}
+                        className="w-full text-xs font-semibold p-2 pr-5 border border-stone-200 rounded-lg text-right focus:outline-amber-500 h-[38px] text-teal-800 font-mono"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-stone-400 pointer-events-none">원</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-amber-700 font-medium">매월 추가 여유자금</label>
+                    <div className="relative mt-1">
+                      <input 
+                        type="text"
+                        inputMode="numeric"
+                        value={formatNumber(bufferFund.monthlyReserve)}
+                        placeholder="0"
+                        onChange={(e) => setBufferFund({ ...bufferFund, monthlyReserve: parseNumber(e.target.value) })}
+                        className="w-full text-xs font-semibold p-2 pr-5 border border-amber-300 rounded-lg text-right focus:outline-amber-500 h-[38px] bg-amber-50/40"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-amber-600 pointer-events-none">원</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <button 
+                onClick={() => setStep(2)}
+                className="w-full py-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-2xl shadow-md transition text-sm flex items-center justify-center gap-1.5"
+              >
+                📊 투자 건강검진 시작하기 (그래프 분석)
+              </button>
+            </main>
+          )}
+
+          {/* STEP 2: 결과 화면 */}
+          {step === 2 && (
+            <main className="p-5 space-y-5 flex-1">
+              
+              {/* 상단 총자산 요약 카드 */}
+              <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm text-center space-y-3">
+                <span className="inline-block px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">
+                  포트폴리오 종합 진단
+                </span>
+                <h2 className="text-xl font-bold text-stone-800">
+                  총 평가자산 <span className="text-amber-700">{formatNumber(grandTotal)}원</span>
+                </h2>
+
+                <div className="bg-stone-50 p-3 rounded-xl flex justify-around text-xs border border-stone-100">
+                  <div>
+                    <span className="text-stone-400 block text-[11px]">수익률</span>
+                    <strong className={`font-bold ${totalProfitRate >= 0 ? 'text-rose-500' : 'text-blue-500'}`}>
+                      {totalProfitRate >= 0 ? `+${totalProfitRate}%` : `${totalProfitRate}%`}
+                    </strong>
+                  </div>
+                  <div className="border-r border-stone-200"></div>
+                  <div>
+                    <span className="text-stone-400 block text-[11px]">월 투자적립액</span>
+                    <strong className="text-stone-900 font-bold">{formatNumber(totalMonthlySaving)}원</strong>
+                  </div>
+                  <div className="border-r border-stone-200"></div>
+                  <div>
+                    <span className="text-stone-400 block text-[11px]">월 여유여력</span>
+                    <strong className="text-teal-700 font-bold">{formatNumber(bufferFund.monthlyReserve)}원</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🎯 [진단 1] 목적 유무 및 달성 페이스 점검 */}
+              <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🎯</span>
+                    <h3 className="text-xs font-bold text-stone-800">1. 투자 목적 및 달성 페이스</h3>
+                  </div>
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${goalStatus.color}`}>
+                    {goalStatus.text}
+                  </span>
+                </div>
+
+                {hasPurpose ? (
+                  <div className="space-y-2 bg-stone-50 p-3 rounded-xl text-xs">
+                    <div className="flex justify-between">
+                      <span className="font-bold text-stone-700">[{goal.title}]</span>
+                      <span className="text-stone-500">목표: {formatNumber(goal.targetAmount)}원 ({goal.targetYears}년)</span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden">
+                        <div style={{ width: `${currentProgress}%` }} className="bg-amber-500 h-full rounded-full transition-all duration-500" />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-stone-400">
+                        <span>현재 모인 금액</span>
+                        <strong className="text-stone-700">{formatNumber(grandTotal)}원 ({currentProgress}%)</strong>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-stone-200/60 flex justify-between items-center text-[11px]">
+                      <span className="text-stone-500">
+                        {goal.targetYears}년 뒤 예상 금액 (월 {formatNumber(totalMonthlySaving)}원 유지 시):
+                      </span>
+                      <span className={`font-bold ${expectedPaceRate >= 70 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        약 {formatNumber(expectedTotalAmount)}원 ({expectedPaceRate}%)
+                      </span>
+                    </div>
+
+                    {expectedPaceRate < 70 && (
+                      <p className="text-[11px] text-amber-800 bg-amber-100/60 p-2 rounded-lg leading-tight">
+                        ⚠️ 현재 월 {formatNumber(totalMonthlySaving)}원씩 모으면 만기 시 약 {formatNumber(expectedTotalAmount)}원에 도달하여 목표(1억 원)에 다소 부족해요. 월 적립액을 늘리거나 기간 조정을 고려해보세요!
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-xl">
+                    ⚠️ 쓸 시기가 정해지지 않은 투자는 시장이 출렁일 때 공포에 질려 손해를 보고 팔아버릴 확률이 매우 높습니다.
+                  </p>
+                )}
+
+                <div className="pt-2 border-t border-stone-100 flex flex-col items-end">
+                  <button 
+                    onClick={() => setShowTip({ ...showTip, goal: !showTip.goal })}
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1"
+                  >
+                    <span>💡 왜 중요할까요?</span>
+                    <span className="text-[10px]">{showTip.goal ? '▲' : '▼'}</span>
+                  </button>
+                  {showTip.goal && (
+                    <div className="w-full mt-2 bg-amber-50/70 p-3 rounded-xl border border-amber-200 text-xs text-stone-700 leading-relaxed space-y-1 text-left">
+                      <p className="font-bold text-amber-800">🚢 목적지는 배의 닻과 같아요!</p>
+                      <p className="text-[11px]">
+                        투자는 단순히 "돈을 많이 벌기 위함"이 아니라, <strong>"언제 쓸 돈인가"</strong>를 정하는 게 핵심이에요. 
+                        1~2년 뒤 쓸 돈을 주식에 넣었다가 하락장이 오면 마이너스 상태에서 울며 겨자 먹기로 팔아야 하지만, 5년 뒤 쓸 돈이라면 여유롭게 기다릴 수 있거든요.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 📊 [진단 2] 원 그래프 배분 분석 */}
+              <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm space-y-4">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🥧</span>
+                    <h3 className="text-xs font-bold text-stone-800">2. 포트폴리오 배분 현황</h3>
+                  </div>
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
+                    다각도 분석
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1 bg-stone-100 p-1 rounded-xl text-xs font-medium">
+                  <button
+                    onClick={() => setChartTab('type')}
+                    className={`py-1.5 rounded-lg transition ${
+                      chartTab === 'type' ? 'bg-white font-bold text-stone-900 shadow-sm' : 'text-stone-500'
+                    }`}
+                  >
+                    투자 유형별
+                  </button>
+                  <button
+                    onClick={() => setChartTab('region')}
+                    className={`py-1.5 rounded-lg transition ${
+                      chartTab === 'region' ? 'bg-white font-bold text-stone-900 shadow-sm' : 'text-stone-500'
+                    }`}
+                  >
+                    지역별
+                  </button>
+                  <button
+                    onClick={() => setChartTab('sector')}
+                    className={`py-1.5 rounded-lg transition ${
+                      chartTab === 'sector' ? 'bg-white font-bold text-stone-900 shadow-sm' : 'text-stone-500'
+                    }`}
+                  >
+                    산업·테마별
+                  </button>
+                </div>
+
+                <div className="py-2">
+                  <DonutChart data={currentChartData} total={grandTotal} />
+                </div>
+
+                <div className="space-y-2 pt-1 border-t border-stone-100">
+                  {currentChartData.map((item, idx) => (
+                    <div key={item.name} className="flex justify-between items-center text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${COLOR_MAP[idx % COLOR_MAP.length].bg}`}></span>
+                        <span className="text-stone-700 font-medium">{item.name}</span>
+                      </div>
+                      <div className="space-x-2">
+                        <span className="text-stone-400 text-[11px]">{formatNumber(item.amount)}원</span>
+                        <strong className="text-stone-900 font-bold">{item.percent}%</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-2 border-t border-stone-100 flex flex-col items-end">
+                  <button 
+                    onClick={() => setShowTip({ ...showTip, alloc: !showTip.alloc })}
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1"
+                  >
+                    <span>💡 왜 나눠 담아야 할까요?</span>
+                    <span className="text-[10px]">{showTip.alloc ? '▲' : '▼'}</span>
+                  </button>
+                  {showTip.alloc && (
+                    <div className="w-full mt-2 bg-amber-50/70 p-3 rounded-xl border border-amber-200 text-xs text-stone-700 leading-relaxed space-y-1 text-left">
+                      <p className="font-bold text-amber-800">🌦️ 날씨와 옷차림 비유</p>
+                      <p className="text-[11px]">
+                        맑은 날(상승장)에는 시원한 반소매(성장주)가 최고지만, 갑자기 비바람(하락장)이 몰아치면 우산(안전자산)과 외투(배당주)가 필요해요.
+                        한 가지 옷만 입고 외출하면 날씨가 바뀔 때 감기에 걸리듯, 계좌도 여러 자산으로 날씨 변화에 대비해야 안전합니다.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 🛡️ [진단 3] 여유자금 점검 */}
+              <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🛡️</span>
+                    <h3 className="text-xs font-bold text-stone-800">3. 투자 여유자금 (완충력) 점검</h3>
+                  </div>
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                    hasAdequateBuffer ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                  }`}>
+                    {hasAdequateBuffer ? '에어백 든든 🟢' : '에어백 부족 🔴'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-2.5 bg-stone-50 rounded-xl">
+                    <span className="text-stone-500 block text-[11px]">현재 예수금·비상금</span>
+                    <strong className="text-stone-800 font-bold">{formatNumber(totalBufferAmount)}원</strong>
+                  </div>
+                  <div className="p-2.5 bg-stone-50 rounded-xl">
+                    <span className="text-stone-500 block text-[11px]">매월 여유 저축력</span>
+                    <strong className="text-teal-700 font-bold">+{formatNumber(bufferFund.monthlyReserve)}원/월</strong>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-stone-100 flex flex-col items-end">
+                  <button 
+                    onClick={() => setShowTip({ ...showTip, buffer: !showTip.buffer })}
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1"
+                  >
+                    <span>💡 왜 남겨둬야 할까요?</span>
+                    <span className="text-[10px]">{showTip.buffer ? '▲' : '▼'}</span>
+                  </button>
+                  {showTip.buffer && (
+                    <div className="w-full mt-2 bg-amber-50/70 p-3 rounded-xl border border-amber-200 text-xs text-stone-700 leading-relaxed space-y-1 text-left">
+                      <p className="font-bold text-amber-800">🚗 여유자금은 자동차의 에어백이에요!</p>
+                      <p className="text-[11px]">
+                        "통장에 놀려두면 이자도 적은데 다 투자하는 게 이득 아닌가요?"라고 생각하기 쉬워요.
+                        하지만 갑자기 급전이 필요할 때 마이너스 난 주식을 눈물 머금고 깨지 않게 지켜주는 <strong>방패</strong>이자, 
+                        좋은 주식이 반토막 세일할 때 줍는 <strong>비장의 실탄</strong>이 바로 여유자금입니다.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 🌰 재무링의 현실적인 하락장 가상 시나리오 처방전 */}
+              <div className="bg-stone-900 text-stone-100 p-4 rounded-2xl space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🌰</span>
+                  <p className="text-xs font-bold text-amber-400">만약 지금 시장이 급락한다면? (재무링 처방)</p>
+                </div>
+                
+                <div className="bg-stone-800/80 p-3 rounded-xl border border-stone-700 text-xs leading-relaxed space-y-1.5">
+                  <div className="text-amber-200 font-bold flex items-center gap-1">
+                    <span>⚡ 가상 충격 시나리오:</span>
+                    <span>{stockHeavy && totalBufferAmount < 100000 ? "충격 흡수 불가 (위험)" : "안전 순항 가능"}</span>
+                  </div>
+                  <p className="text-stone-300 text-[11px]">
+                    {stockHeavy && totalBufferAmount < 100000 
+                      ? `현재 자산의 90% 이상이 주식에 들어가 있고 비상금(${formatNumber(totalBufferAmount)}원)이 거의 없어요. 만약 오늘 밤 세계 증시가 -20% 폭락하면, 계좌 전체가 고스란히 충격을 받고 갑작스러운 지출이 생겼을 때 손실 난 주식을 헐값에 팔아야 하는 악순환에 빠질 수 있습니다.`
+                      : `지역과 산업이 골고루 분산되어 있어 특정 국가나 테마가 폭락해도 계좌 전체가 무너지지 않아요. 목적 기간에 맞춰 차분히 적립을 이어가시면 됩니다.`}
+                  </p>
+                </div>
+
+                <p className="text-xs text-stone-300">
+                  👉 <strong>오늘의 1줄 실천:</strong> {totalBufferAmount < 500000 ? `매월 추가 여유자금(${formatNumber(bufferFund.monthlyReserve)}원)으로 CMA나 단기채권 같은 안전 버팀목부터 50만 원 이상 채워두세요!` : "지금처럼 균형 잡힌 배분을 유지하며 매월 정기적으로 물을 주세요!"}
+                </p>
+              </div>
+
+              {/* ──────────────────────────────────────────────────────────
+                  🔗 [신규 추가] 투자원칙서 및 리밸런싱 비서 연결 배너 링크
+              ────────────────────────────────────────────────────────── */}
+              <div className="bg-gradient-to-br from-amber-500 to-amber-700 rounded-2xl p-4 text-white shadow-md space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">📜</span>
+                    <h4 className="font-bold text-sm">나만의 투자원칙 & 리밸런싱 비서</h4>
+                  </div>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-semibold">
+                    1:1 관리
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-100 leading-snug">
+                  펀드·ETF 투자는 <strong>투자원칙에 입각한 정기 리밸런싱(가지치기)</strong>이 수익률의 핵심이에요. 
+                  잊지 않고 때맞춰 챙겨주는 리밸런싱 비서 플랜을 세워보세요!
+                </p>
+                <a
+                  href="#principle-planner"
+                  onClick={(e) => {
+                    // 실제 서비스 연결 URL이 있을 경우 href를 변경하시면 됩니다.
+                    e.preventDefault();
+                    alert("📋 투자원칙서 작성 및 리밸런싱 비서 플랜 페이지로 이동합니다 (연결 링크)");
+                  }}
+                  className="mt-2 w-full py-2.5 bg-white hover:bg-amber-50 text-amber-900 font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5"
+                >
+                  <span>투자원칙서 작성하고 리밸런싱 비서 시작하기</span>
+                  <span>👉</span>
+                </a>
+              </div>
+
+              {/* 다시 입력 버튼 */}
+              <button 
+                onClick={() => setStep(1)}
+                className="w-full py-3.5 bg-stone-200 hover:bg-stone-300 text-stone-700 font-bold rounded-xl text-xs transition"
+              >
+                ← 다시 수정하기
+              </button>
+            </main>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.render(<JampleInvestmentDiagnosis />, document.getElementById('root'));
+  </script>
+</body>
+</html>
